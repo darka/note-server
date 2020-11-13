@@ -37,7 +37,10 @@ List json
 
 type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
                         Capture "noteid" Int64 :> Get '[JSON] (Maybe (Entity Note)) :<|>
-                        ReqBody '[JSON] Note :> Post '[JSON] (Entity Note))
+                        ReqBody '[JSON] Note :> Post '[JSON] (Entity Note)) :<|>
+            "lists" :> (Get '[JSON] [Entity List] :<|>
+                        Capture "listid" Int64 :> Get '[JSON] (Maybe (Entity List)) :<|>
+                        ReqBody '[JSON] List :> Post '[JSON] (Entity List))
 
 crudAPI :: Proxy Crud
 crudAPI = Proxy
@@ -58,11 +61,23 @@ postNote conn note = do
   key <- liftIO $ runAction conn $ insert note
   return $ Entity key note
 
+getLists :: ConnectionString -> Handler [Entity List]
+getLists conn = liftIO $ runAction conn $ (select . from $ \lists -> return lists)
+
+getList :: ConnectionString -> Int64 -> Handler (Maybe (Entity List))
+getList conn listId = liftIO $ runAction conn $ selectFirst [ListId ==. toSqlKey listId] []
+
+postList :: ConnectionString -> List -> Handler (Entity List)
+postList conn list = do
+  key <- liftIO $ runAction conn $ insert list
+  return $ Entity key list
+
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
 
 noteServer :: ConnectionString -> Server Crud
-noteServer conn = getNotes conn :<|> getNote conn :<|> postNote conn
+noteServer conn = (getNotes conn :<|> getNote conn :<|> postNote conn) :<|>
+                  (getLists conn :<|> getList conn :<|> postList conn)
 
 main :: IO ()
 main = do
