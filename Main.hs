@@ -10,17 +10,21 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE FlexibleInstances          #-}
+
 
 module Main where
 
 import Control.Monad.Reader (runReaderT, liftIO)
 import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
+import Data.Aeson
 import Data.Aeson.TH
+import Data.Int (Int64)
 import Data.Proxy
-import Database.Esqueleto (entityVal, select, from, insert)
-import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT)
+import Database.Esqueleto (select, from, insert, fromSqlKey)
+import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity,
+                                    entityIdToJSON, entityIdFromJSON)
 import Database.Persist.TH
-    ( mkMigrate, mkPersist, persistLowerCase, share, sqlSettings )
 import Network.Wai.Handler.Warp (run)
 import Servant.API
 import Servant.Server
@@ -35,29 +39,33 @@ List
     items [String]
 |]
 
-
 deriveJSON defaultOptions {fieldLabelModifier = decapitalize . (drop 4)} ''Note
 deriveJSON defaultOptions ''List
 
-type Crud = "notes" :> (Get '[JSON] [Note] :<|>
-                        ReqBody '[JSON] Note :> Post '[JSON] Note)
+instance ToJSON (Entity Note) where
+  toJSON = entityIdToJSON
+
+instance FromJSON (Entity Note) where
+  parseJSON = entityIdFromJSON
+
+type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
+                        ReqBody '[JSON] Note :> Post '[JSON] Int64)
 
 crudAPI :: Proxy Crud
 crudAPI = Proxy
 
+-- TODO configure logger with timestamps if possible
 runAction :: ConnectionString -> SqlPersistT (LoggingT IO) a ->  IO a
 runAction connectionString action = runStdoutLoggingT $ withPostgresqlConn connectionString $ \backend ->
   runReaderT action backend
 
-getNotes :: ConnectionString -> Handler [Note]
-getNotes conn = do
-  notes <- liftIO $ runAction conn $ (select . from $ \notes -> return notes)
-  return $ map entityVal notes
+getNotes :: ConnectionString -> Handler [Entity Note]
+getNotes conn = liftIO $ runAction conn $ (select . from $ \notes -> return notes)
 
-postNote :: ConnectionString -> Note -> Handler Note
+postNote :: ConnectionString -> Note -> Handler Int64
 postNote conn note = do
-  liftIO $ runAction conn $ insert note
-  return note
+  result <- liftIO $ runAction conn $ insert note
+  return $ fromSqlKey result
 
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
