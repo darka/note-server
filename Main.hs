@@ -19,8 +19,8 @@ import Control.Monad.Reader (runReaderT, liftIO)
 import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
 import Data.Int (Int64)
 import Data.Proxy
-import Database.Esqueleto (select, from, insert, fromSqlKey, toSqlKey)
-import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity, selectFirst, (==.))
+import Database.Esqueleto (select, from, insert, toSqlKey)
+import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity(..), selectFirst, (==.))
 import Database.Persist.TH
 import Network.Wai.Handler.Warp (run)
 import Servant.API
@@ -37,7 +37,7 @@ List json
 
 type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
                         Capture "noteid" Int64 :> Get '[JSON] (Maybe (Entity Note)) :<|>
-                        ReqBody '[JSON] Note :> Post '[JSON] Int64)
+                        ReqBody '[JSON] Note :> Post '[JSON] (Entity Note))
 
 crudAPI :: Proxy Crud
 crudAPI = Proxy
@@ -53,10 +53,10 @@ getNotes conn = liftIO $ runAction conn $ (select . from $ \notes -> return note
 getNote :: ConnectionString -> Int64 -> Handler (Maybe (Entity Note))
 getNote conn noteId = liftIO $ runAction conn $ selectFirst [NoteId ==. toSqlKey noteId] []
 
-postNote :: ConnectionString -> Note -> Handler Int64
+postNote :: ConnectionString -> Note -> Handler (Entity Note)
 postNote conn note = do
-  result <- liftIO $ runAction conn $ insert note
-  return $ fromSqlKey result
+  key <- liftIO $ runAction conn $ insert note
+  return $ Entity key note
 
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
