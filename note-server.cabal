@@ -18,6 +18,7 @@ extra-source-files:  CHANGELOG.md
 
 executable note-server
   main-is:             Main.hs
+  other-modules:       Util
   -- other-extensions:
   build-depends:       base ^>=4.13.0.0, 
                        persistent ^>=2.10.5.2,

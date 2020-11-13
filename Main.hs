@@ -17,13 +17,14 @@ import Control.Monad.Reader (runReaderT, liftIO)
 import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
 import Data.Aeson.TH
 import Data.Proxy
-import Database.Esqueleto (entityVal, select, from)
+import Database.Esqueleto (entityVal, select, from, insert)
 import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT)
 import Database.Persist.TH
     ( mkMigrate, mkPersist, persistLowerCase, share, sqlSettings )
 import Network.Wai.Handler.Warp (run)
 import Servant.API
 import Servant.Server
+import Util
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 Note
@@ -34,10 +35,12 @@ List
     items [String]
 |]
 
-deriveJSON defaultOptions ''Note
+
+deriveJSON defaultOptions {fieldLabelModifier = decapitalize . (drop 4)} ''Note
 deriveJSON defaultOptions ''List
 
-type Crud = "notes" :> Get '[JSON] [Note]
+type Crud = "notes" :> (Get '[JSON] [Note] :<|>
+                        ReqBody '[JSON] Note :> Post '[JSON] Note)
 
 crudAPI :: Proxy Crud
 crudAPI = Proxy
@@ -51,11 +54,16 @@ getNotes conn = do
   notes <- liftIO $ runAction conn $ (select . from $ \notes -> return notes)
   return $ map entityVal notes
 
+postNote :: ConnectionString -> Note -> Handler Note
+postNote conn note = do
+  liftIO $ runAction conn $ insert note
+  return note
+
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
 
 noteServer :: ConnectionString -> Server Crud
-noteServer = getNotes
+noteServer conn = getNotes conn :<|> postNote conn
 
 main :: IO ()
 main = do
