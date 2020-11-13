@@ -17,36 +17,23 @@ module Main where
 
 import Control.Monad.Reader (runReaderT, liftIO)
 import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
-import Data.Aeson
-import Data.Aeson.TH
 import Data.Int (Int64)
 import Data.Proxy
 import Database.Esqueleto (select, from, insert, fromSqlKey, toSqlKey)
-import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity,
-                                    entityIdToJSON, entityIdFromJSON, selectFirst, (==.))
+import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity, selectFirst, (==.))
 import Database.Persist.TH
 import Network.Wai.Handler.Warp (run)
 import Servant.API
 import Servant.Server
-import Util
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
-Note
+Note json
     name String
     contents String
-List
+List json
     name String
     items [String]
 |]
-
-deriveJSON defaultOptions {fieldLabelModifier = decapitalize . (drop 4)} ''Note
-deriveJSON defaultOptions ''List
-
--- We have to implement the json conversion for entities in order to have entity ids in the output
-instance ToJSON (Entity Note) where
-  toJSON = entityIdToJSON
-instance FromJSON (Entity Note) where
-  parseJSON = entityIdFromJSON
 
 type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
                         Capture "noteid" Int64 :> Get '[JSON] (Maybe (Entity Note)) :<|>
