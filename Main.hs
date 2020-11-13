@@ -21,9 +21,9 @@ import Data.Aeson
 import Data.Aeson.TH
 import Data.Int (Int64)
 import Data.Proxy
-import Database.Esqueleto (select, from, insert, fromSqlKey)
+import Database.Esqueleto (select, from, insert, fromSqlKey, toSqlKey)
 import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity,
-                                    entityIdToJSON, entityIdFromJSON)
+                                    entityIdToJSON, entityIdFromJSON, selectFirst, (==.))
 import Database.Persist.TH
 import Network.Wai.Handler.Warp (run)
 import Servant.API
@@ -42,13 +42,14 @@ List
 deriveJSON defaultOptions {fieldLabelModifier = decapitalize . (drop 4)} ''Note
 deriveJSON defaultOptions ''List
 
+-- We have to implement the json conversion for entities in order to have entity ids in the output
 instance ToJSON (Entity Note) where
   toJSON = entityIdToJSON
-
 instance FromJSON (Entity Note) where
   parseJSON = entityIdFromJSON
 
 type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
+                        Capture "noteid" Int64 :> Get '[JSON] (Maybe (Entity Note)) :<|>
                         ReqBody '[JSON] Note :> Post '[JSON] Int64)
 
 crudAPI :: Proxy Crud
@@ -62,6 +63,9 @@ runAction connectionString action = runStdoutLoggingT $ withPostgresqlConn conne
 getNotes :: ConnectionString -> Handler [Entity Note]
 getNotes conn = liftIO $ runAction conn $ (select . from $ \notes -> return notes)
 
+getNote :: ConnectionString -> Int64 -> Handler (Maybe (Entity Note))
+getNote conn noteId = liftIO $ runAction conn $ selectFirst [NoteId ==. toSqlKey noteId] []
+
 postNote :: ConnectionString -> Note -> Handler Int64
 postNote conn note = do
   result <- liftIO $ runAction conn $ insert note
@@ -71,7 +75,7 @@ connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
 
 noteServer :: ConnectionString -> Server Crud
-noteServer conn = getNotes conn :<|> postNote conn
+noteServer conn = getNotes conn :<|> getNote conn :<|> postNote conn
 
 main :: IO ()
 main = do
