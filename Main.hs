@@ -1,5 +1,3 @@
-{-# LANGUAGE EmptyDataDecls             #-}
-{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
@@ -10,13 +8,22 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE TypeOperators              #-}
 
 module Main where
 
-import Control.Monad.Reader (runReaderT)
-import Control.Monad.Logger (runStdoutLoggingT)
-import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration)
+import Control.Monad.Reader (runReaderT, liftIO)
+import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
+import Data.Aeson.TH
+import Data.Proxy
+import Database.Esqueleto (entityVal, select, from)
+import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT)
 import Database.Persist.TH
+    ( mkMigrate, mkPersist, persistLowerCase, share, sqlSettings )
+import Network.Wai.Handler.Warp (run)
+import Servant.API
+import Servant.Server
 
 share [mkPersist sqlSettings, mkMigrate "migrateAll"] [persistLowerCase|
 Note
@@ -27,11 +34,31 @@ List
     items [String]
 |]
 
+deriveJSON defaultOptions ''Note
+deriveJSON defaultOptions ''List
+
+type Crud = "notes" :> Get '[JSON] [Note]
+
+crudAPI :: Proxy Crud
+crudAPI = Proxy
+
+runAction :: ConnectionString -> SqlPersistT (LoggingT IO) a ->  IO a
+runAction connectionString action = runStdoutLoggingT $ withPostgresqlConn connectionString $ \backend ->
+  runReaderT action backend
+
+getNotes :: ConnectionString -> Handler [Note]
+getNotes conn = do
+  notes <- liftIO $ runAction conn $ (select . from $ \notes -> return notes)
+  return $ map entityVal notes
+
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
 
+noteServer :: ConnectionString -> Server Crud
+noteServer = getNotes
 
 main :: IO ()
 main = do
   runStdoutLoggingT $ withPostgresqlConn connString $ \backend -> 
     runReaderT (runMigration migrateAll) backend
+  run 8080 (serve crudAPI (noteServer connString))
