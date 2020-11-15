@@ -11,16 +11,21 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE FlexibleContexts           #-}
 
 
 module Main where
 
-import Control.Monad.Reader (runReaderT, liftIO)
-import Control.Monad.Logger (runStdoutLoggingT, LoggingT)
+import Control.Exception (try)
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Logger (runStdoutLoggingT)
+import Control.Monad.Reader (MonadReader, ReaderT(..), runReaderT, liftIO, ask)
+import Control.Monad.Except (ExceptT(..))
 import Data.Int (Int64)
 import Data.Proxy
 import Database.Esqueleto (select, from, insert, toSqlKey)
-import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity(..), selectFirst, (==.))
+import Database.Persist.Postgresql (ConnectionString, withPostgresqlConn, runMigration, SqlPersistT, Entity(..), selectFirst, (==.), createPostgresqlPool)
+import Database.Persist.Sql (ConnectionPool, runSqlPool)
 import Database.Persist.TH
 import Network.Wai.Handler.Warp (run)
 import Servant.API
@@ -45,42 +50,54 @@ type Crud = "notes" :> (Get '[JSON] [Entity Note] :<|>
 crudAPI :: Proxy Crud
 crudAPI = Proxy
 
--- TODO configure logger with timestamps if possible
-runAction :: ConnectionString -> SqlPersistT (LoggingT IO) a ->  IO a
-runAction connectionString action = runStdoutLoggingT $ withPostgresqlConn connectionString $ \backend ->
-  runReaderT action backend
+data Env = Env { pool :: ConnectionPool }
 
-getNotes :: ConnectionString -> Handler [Entity Note]
-getNotes conn = liftIO $ runAction conn $ (select . from $ \notes -> return notes)
+newtype AppMonad a = AppMonad { unAppMonad :: ReaderT Env IO a } deriving
+  (Functor, Applicative, Monad, MonadIO, MonadReader Env)
 
-getNote :: ConnectionString -> Int64 -> Handler (Maybe (Entity Note))
-getNote conn noteId = liftIO $ runAction conn $ selectFirst [NoteId ==. toSqlKey noteId] []
+runAction :: (MonadReader Env m, MonadIO m) => SqlPersistT IO a -> m a
+runAction action = do
+  env <- ask
+  liftIO . runSqlPool action $ pool env
 
-postNote :: ConnectionString -> Note -> Handler (Entity Note)
-postNote conn note = do
-  key <- liftIO $ runAction conn $ insert note
+getNotes :: AppMonad [Entity Note]
+getNotes = runAction $ (select . from $ \notes -> return notes)
+
+getNote :: Int64 -> AppMonad (Maybe (Entity Note))
+getNote noteId = runAction $ selectFirst [NoteId ==. toSqlKey noteId] []
+
+postNote :: Note -> AppMonad (Entity Note)
+postNote note = do
+  key <- runAction $ insert note
   return $ Entity key note
 
-getLists :: ConnectionString -> Handler [Entity List]
-getLists conn = liftIO $ runAction conn $ (select . from $ \lists -> return lists)
+getLists :: AppMonad [Entity List]
+getLists = runAction $ (select . from $ \lists -> return lists)
 
-getList :: ConnectionString -> Int64 -> Handler (Maybe (Entity List))
-getList conn listId = liftIO $ runAction conn $ selectFirst [ListId ==. toSqlKey listId] []
+getList :: Int64 -> AppMonad (Maybe (Entity List))
+getList listId = runAction $ selectFirst [ListId ==. toSqlKey listId] []
 
-postList :: ConnectionString -> List -> Handler (Entity List)
-postList conn list = do
-  key <- liftIO $ runAction conn $ insert list
+postList :: List -> AppMonad (Entity List)
+postList list = do
+  key <- runAction $ insert list
   return $ Entity key list
 
 connString :: ConnectionString
 connString = "host=127.0.0.1 port=5432 user=darius password=blah dbname=note_server"
 
-noteServer :: ConnectionString -> Server Crud
-noteServer conn = (getNotes conn :<|> getNote conn :<|> postNote conn) :<|>
-                  (getLists conn :<|> getList conn :<|> postList conn)
+noteServer :: ServerT Crud AppMonad
+noteServer = (getNotes :<|> getNote :<|> postNote) :<|>
+             (getLists :<|> getList :<|> postList)
+
+hoistAppServer :: Env -> Server Crud
+hoistAppServer config = hoistServer crudAPI (nt config) noteServer where
+  nt :: Env -> AppMonad a -> Handler a
+  nt env m = Handler $ ExceptT $ try $ runReaderT (unAppMonad m) env
 
 main :: IO ()
 main = do
+  -- TODO configure logger with timestamps if possible
   runStdoutLoggingT $ withPostgresqlConn connString $ \backend -> 
     runReaderT (runMigration migrateAll) backend
-  run 8080 (serve crudAPI (noteServer connString))
+  dbPool <- runStdoutLoggingT $ createPostgresqlPool connString 2
+  run 8080 (serve crudAPI (hoistAppServer $ Env { pool = dbPool }))
