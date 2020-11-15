@@ -9,12 +9,10 @@ version:             0.1.0.0
 -- description:
 -- bug-reports:
 -- license:
-license-file:        LICENSE
 -- author:
 -- maintainer:
 -- copyright:
 -- category:
-extra-source-files:  CHANGELOG.md
 
 executable note-server
   main-is:             Main.hs
