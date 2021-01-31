@@ -17,10 +17,10 @@ version:             0.1.0.0
 executable note-server
   main-is:             Main.hs
   -- other-extensions:
-  build-depends:       base ^>=4.13.0.0, 
-                       persistent ^>=2.10.5.2,
-                       persistent-postgresql ^>=2.10.0.0,
-                       persistent-template ^>=2.8.2.3,
+  build-depends:       base ^>=4.14.1.0,
+                       persistent ^>=2.11.0.2,
+                       persistent-postgresql ^>=2.11.0.1,
+                       persistent-template ^>=2.9.1.0,
                        monad-logger ^>=0.3.35,
                        mtl ^>=2.2.2,
                        time ^>=1.9.3,

@@ -1,7 +1,12 @@
-FROM haskell:8.8.1
+FROM nixos/nix
+
+RUN nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+RUN nix-channel --update
+
+RUN nix-env -i cabal2nix
+
 COPY . /app
 WORKDIR /app
-RUN apt update && apt install -y libpq-dev
-RUN cabal update
-RUN cabal install
-ENTRYPOINT note-server
+RUN cabal2nix .
+RUN nix-build release.nix
+ENTRYPOINT result/bin/note-server
